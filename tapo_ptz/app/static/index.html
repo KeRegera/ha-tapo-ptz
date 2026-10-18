@@ -1,0 +1,266 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tapo PTZ</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1c1f24; --muted: #6b7280;
+    --line: #e3e6ea; --accent: #03a9f4; --accent-text: #fff; --danger: #db4437; --ok: #2e9d57;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #111418; --card: #1c2026; --text: #e7e9ec; --muted: #9aa3ad;
+            --line: #2c323a; --accent: #29b6f6; --accent-text: #06202c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px; }
+  h2 { font-size: 15px; margin: 0 0 12px; font-weight: 600; letter-spacing: .2px; }
+  select, input[type=text], input[type=time] {
+    width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line);
+    background: var(--bg); color: var(--text); font: inherit; }
+  button { font: inherit; border: 0; border-radius: 10px; padding: 10px 14px; cursor: pointer;
+           background: var(--bg); color: var(--text); border: 1px solid var(--line); }
+  button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+  button.danger { color: var(--danger); }
+  button:disabled { opacity: .5; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  .row > .grow { flex: 1; }
+  .snap { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 10px; object-fit: contain; display: block; }
+  .ptz { display: grid; grid-template-columns: repeat(3, 64px); grid-template-rows: repeat(3, 64px);
+         gap: 8px; justify-content: center; margin: 14px 0 10px; user-select: none; -webkit-user-select: none; }
+  .ptz button { font-size: 22px; padding: 0; border-radius: 16px; touch-action: none; }
+  .ptz button:active { background: var(--accent); color: var(--accent-text); }
+  .ptz .c { font-size: 13px; }
+  .step { display: flex; gap: 10px; align-items: center; color: var(--muted); }
+  .step input { flex: 1; accent-color: var(--accent); }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { display: flex; gap: 8px; align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
+  li:first-child { border-top: 0; }
+  li .grow { flex: 1; min-width: 0; }
+  li .sub { color: var(--muted); font-size: 13px; }
+  .days { display: flex; gap: 4px; flex-wrap: wrap; margin: 10px 0; }
+  .days label { flex: 1; min-width: 38px; text-align: center; padding: 7px 0; border-radius: 8px;
+                border: 1px solid var(--line); cursor: pointer; font-size: 13px; }
+  .days input { display: none; }
+  .days input:checked + span { color: var(--accent); font-weight: 600; }
+  .days label:has(input:checked) { border-color: var(--accent); }
+  .empty { color: var(--muted); font-size: 14px; }
+  .toggle { width: 42px; height: 24px; border-radius: 12px; padding: 0; position: relative; flex: none; }
+  .toggle::after { content: ""; position: absolute; top: 3px; left: 3px; width: 16px; height: 16px;
+                   border-radius: 50%; background: var(--muted); transition: .15s; }
+  .toggle.on { background: var(--accent); border-color: var(--accent); }
+  .toggle.on::after { left: 21px; background: var(--accent-text); }
+  #toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); padding: 10px 16px;
+           border-radius: 10px; background: var(--text); color: var(--bg); font-size: 14px;
+           opacity: 0; transition: .2s; pointer-events: none; max-width: 90vw; }
+  #toast.show { opacity: 1; }
+  #toast.err { background: var(--danger); color: #fff; }
+</style>
+</head>
+<body>
+<main>
+  <section class="card">
+    <div class="row">
+      <select id="cam" class="grow"></select>
+      <button id="calib" title="Motor kalibrieren">Kalibrieren</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <img id="snap" class="snap" alt="" hidden>
+    <div class="ptz">
+      <span></span><button data-dir="0,1" aria-label="Hoch">▲</button><span></span>
+      <button data-dir="-1,0" aria-label="Links">◀</button>
+      <button class="c" id="refresh" title="Bild aktualisieren">⟳</button>
+      <button data-dir="1,0" aria-label="Rechts">▶</button>
+      <span></span><button data-dir="0,-1" aria-label="Runter">▼</button><span></span>
+    </div>
+    <div class="step">Schritt <input id="step" type="range" min="5" max="90" step="5" value="15"><b id="stepv">15°</b></div>
+  </section>
+
+  <section class="card">
+    <h2>Gespeicherte Positionen</h2>
+    <ul id="presets"></ul>
+    <div class="row" style="margin-top:10px">
+      <input id="pname" type="text" class="grow" placeholder="Aktuelle Position speichern als …" maxlength="30">
+      <button id="psave" class="primary">Speichern</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>Zeitpläne</h2>
+    <ul id="schedules"></ul>
+    <div style="margin-top:12px">
+      <div class="row">
+        <input id="stime" type="time" value="08:00" style="width:120px">
+        <select id="spreset" class="grow"></select>
+      </div>
+      <div class="days" id="sdays"></div>
+      <button id="sadd" class="primary" style="width:100%">Zeitplan hinzufügen</button>
+    </div>
+  </section>
+</main>
+<div id="toast"></div>
+
+<script>
+const DAYS = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"];
+const $ = (id) => document.getElementById(id);
+let presets = [];
+let snapTimer = null;
+
+function toast(msg, err = false) {
+  const t = $("toast");
+  t.textContent = msg; t.className = "show" + (err ? " err" : "");
+  clearTimeout(t._h); t._h = setTimeout(() => t.className = "", 2500);
+}
+
+async function api(path, opts = {}) {
+  const r = await fetch("api/" + path, {
+    headers: { "Content-Type": "application/json" }, ...opts,
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || "HTTP " + r.status);
+  return data;
+}
+const cam = () => encodeURIComponent($("cam").value);
+
+// ---------- Kameras
+async function loadCameras() {
+  const cams = await api("cameras");
+  $("cam").innerHTML = cams.map(c => `<option value="${c.name}" data-snap="${c.has_snapshot}">${c.name} (${c.host})</option>`).join("");
+  if (!cams.length) { toast("Keine Kamera konfiguriert – siehe Konfiguration der App", true); return; }
+  try { const last = localStorage.getItem("tapo_cam"); if (last && cams.some(c => c.name === last)) $("cam").value = last; } catch (e) {}
+  await selectCamera();
+}
+async function selectCamera() {
+  try { localStorage.setItem("tapo_cam", $("cam").value); } catch (e) {}
+  setupSnapshot();
+  await Promise.all([loadPresets(), loadSchedules()]);
+}
+$("cam").onchange = selectCamera;
+
+// ---------- Live-Bild (über Home-Assistant-Kamera-Entität)
+function setupSnapshot() {
+  clearInterval(snapTimer);
+  const opt = $("cam").selectedOptions[0];
+  const has = opt && opt.dataset.snap === "true";
+  $("snap").hidden = !has;
+  if (!has) return;
+  refreshSnap();
+  snapTimer = setInterval(() => { if (!document.hidden) refreshSnap(); }, 2000);
+}
+function refreshSnap() {
+  const img = new Image();
+  img.onload = () => { $("snap").src = img.src; };
+  img.src = `api/${cam()}/snapshot?t=${Date.now()}`;
+}
+$("refresh").onclick = () => refreshSnap();
+
+// ---------- Steuerkreuz (Tippen = ein Schritt, Halten = wiederholen)
+$("step").oninput = () => $("stepv").textContent = $("step").value + "°";
+let busy = false;
+async function move(dx, dy) {
+  if (busy) return; busy = true;
+  const s = +$("step").value;
+  try { await api(`${cam()}/move`, { method: "POST", body: { x: dx * s, y: dy * s } }); setTimeout(refreshSnap, 700); }
+  catch (e) { toast(e.message, true); }
+  finally { busy = false; }
+}
+document.querySelectorAll(".ptz [data-dir]").forEach(b => {
+  const [dx, dy] = b.dataset.dir.split(",").map(Number);
+  let rep = null;
+  const stop = () => { clearInterval(rep); rep = null; };
+  b.addEventListener("pointerdown", e => { e.preventDefault(); move(dx, dy); rep = setInterval(() => move(dx, dy), 700); });
+  ["pointerup", "pointerleave", "pointercancel"].forEach(ev => b.addEventListener(ev, stop));
+});
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT") return;
+  const k = { ArrowUp: [0, 1], ArrowDown: [0, -1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[e.key];
+  if (k) { e.preventDefault(); move(...k); }
+});
+$("calib").onclick = async () => {
+  if (!confirm("Motor kalibrieren? Die Kamera fährt einmal alle Endpunkte ab.")) return;
+  try { await api(`${cam()}/calibrate`, { method: "POST" }); toast("Kalibrierung gestartet"); }
+  catch (e) { toast(e.message, true); }
+};
+
+// ---------- Positionen
+async function loadPresets() {
+  try { presets = await api(`${cam()}/presets`); }
+  catch (e) { presets = []; toast(e.message, true); }
+  $("presets").innerHTML = presets.length ? presets.map((p, i) => `
+    <li><span class="grow">${esc(p.name)}</span>
+      <button class="primary" onclick="gotoPreset(${i})">Anfahren</button>
+      <button class="danger" onclick="delPreset(${i})" aria-label="Löschen">✕</button></li>`).join("")
+    : `<li class="empty">Noch keine Positionen – Kamera ausrichten und unten speichern.</li>`;
+  $("spreset").innerHTML = presets.map(p => `<option value="${p.id}">${esc(p.name)}</option>`).join("")
+    || `<option value="">– erst Position speichern –</option>`;
+}
+async function gotoPreset(i) {
+  const { id, name } = presets[i];
+  try { await api(`${cam()}/presets/${id}/goto`, { method: "POST" }); toast(`Fahre zu „${name}“`); setTimeout(refreshSnap, 2500); }
+  catch (e) { toast(e.message, true); }
+}
+async function delPreset(i) {
+  const { id, name } = presets[i];
+  if (!confirm(`Position „${name}“ löschen? Zugehörige Zeitpläne werden ebenfalls entfernt.`)) return;
+  try { await api(`${cam()}/presets/${id}`, { method: "DELETE" }); await loadPresets(); await loadSchedules(); }
+  catch (e) { toast(e.message, true); }
+}
+$("psave").onclick = async () => {
+  const name = $("pname").value.trim();
+  if (!name) return toast("Bitte einen Namen eingeben", true);
+  try { await api(`${cam()}/presets`, { method: "POST", body: { name } }); $("pname").value = ""; toast("Position gespeichert"); await loadPresets(); }
+  catch (e) { toast(e.message, true); }
+};
+
+// ---------- Zeitpläne
+$("sdays").innerHTML = DAYS.map((d, i) => `<label><input type="checkbox" value="${i}" checked><span>${d}</span></label>`).join("");
+function dayText(days) {
+  if (days.length === 7) return "täglich";
+  if (days.join() === "0,1,2,3,4") return "Mo–Fr";
+  if (days.join() === "5,6") return "Sa–So";
+  return days.map(d => DAYS[d]).join(", ");
+}
+async function loadSchedules() {
+  const all = await api("schedules").catch(e => { toast(e.message, true); return []; });
+  const list = all.filter(s => s.camera === $("cam").value);
+  $("schedules").innerHTML = list.length ? list.map(s => `
+    <li><span class="grow"><b>${s.time}</b> → ${esc(s.preset_name)}<div class="sub">${dayText(s.days)}</div></span>
+      <button class="toggle ${s.enabled ? "on" : ""}" onclick="toggleSched('${s.id}', ${!s.enabled})" aria-label="Aktiv"></button>
+      <button class="danger" onclick="delSched('${s.id}')" aria-label="Löschen">✕</button></li>`).join("")
+    : `<li class="empty">Keine Zeitpläne für diese Kamera.</li>`;
+}
+async function toggleSched(id, enabled) {
+  try { await api(`schedules/${id}`, { method: "PATCH", body: { enabled } }); await loadSchedules(); }
+  catch (e) { toast(e.message, true); }
+}
+async function delSched(id) {
+  try { await api(`schedules/${id}`, { method: "DELETE" }); await loadSchedules(); }
+  catch (e) { toast(e.message, true); }
+}
+$("sadd").onclick = async () => {
+  const pid = $("spreset").value;
+  if (!pid) return toast("Zuerst eine Position speichern", true);
+  const days = [...document.querySelectorAll("#sdays input:checked")].map(i => +i.value);
+  if (!days.length) return toast("Mindestens einen Tag wählen", true);
+  const preset = presets.find(p => p.id === pid);
+  try {
+    await api("schedules", { method: "POST", body: {
+      camera: $("cam").value, preset_id: pid, preset_name: preset ? preset.name : pid,
+      time: $("stime").value, days } });
+    toast("Zeitplan hinzugefügt"); await loadSchedules();
+  } catch (e) { toast(e.message, true); }
+};
+
+function esc(s) { return String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])); }
+
+loadCameras().catch(e => toast(e.message, true));
+</script>
+</body>
+</html>
